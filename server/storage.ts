@@ -22,9 +22,10 @@ export class MemStorage implements IStorage {
   async createUploadJob(insertJob: InsertUploadJob): Promise<UploadJob> {
     const id = randomUUID();
     const now = new Date();
-    const job: UploadJob = { 
-      ...insertJob, 
+    const job: UploadJob = {
+      ...insertJob,
       id,
+      status: insertJob.status || "uploading",
       progress: insertJob.progress ?? 0,
       error: insertJob.error ?? null,
       results: insertJob.results ?? null,

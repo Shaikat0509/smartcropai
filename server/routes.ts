@@ -8,6 +8,15 @@ import fs from "fs";
 import { insertUploadJobSchema, PLATFORM_CONFIGS, type ProcessedResult } from "@shared/schema";
 import OpenAI from "openai";
 
+// Polyfills for Node.js < 18
+if (!globalThis.fetch) {
+  const { default: fetch, Headers, Request, Response } = await import('node-fetch');
+  globalThis.fetch = fetch as any;
+  globalThis.Headers = Headers as any;
+  globalThis.Request = Request as any;
+  globalThis.Response = Response as any;
+}
+
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -72,9 +81,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      const platforms = JSON.parse(req.body.platforms || '[]');
-      if (!Array.isArray(platforms) || platforms.length === 0) {
-        return res.status(400).json({ message: "At least one platform must be selected" });
+      // Handle both old format (platforms array) and new format (selectedFormats object)
+      let selectedFormats: Record<string, string[]> = {};
+
+      if (req.body.selectedFormats) {
+        selectedFormats = JSON.parse(req.body.selectedFormats || '{}');
+      } else if (req.body.platforms) {
+        // Fallback for old format - select all formats for each platform
+        const platforms = JSON.parse(req.body.platforms || '[]');
+        platforms.forEach((platformId: string) => {
+          const platform = PLATFORM_CONFIGS.find(p => p.id === platformId);
+          if (platform) {
+            selectedFormats[platformId] = platform.formats.map(f => f.name);
+          }
+        });
+      }
+
+      if (Object.keys(selectedFormats).length === 0) {
+        return res.status(400).json({ message: "At least one format must be selected" });
       }
 
       // Validate the upload job data
@@ -82,7 +106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         originalFileName: req.file.originalname,
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
-        platforms: platforms,
+        platforms: Object.keys(selectedFormats),
         status: "processing",
         progress: 0,
         results: null,
@@ -93,7 +117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const job = await storage.createUploadJob(jobData);
 
       // Start processing asynchronously
-      processMediaAsync(job.id, req.file.path, req.file.mimetype, platforms);
+      processMediaAsync(job.id, req.file.path, req.file.mimetype, selectedFormats);
 
       res.json(job);
     } catch (error) {
@@ -154,7 +178,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 }
 
 // Async processing function
-async function processMediaAsync(jobId: string, filePath: string, mimeType: string, platforms: string[]) {
+async function processMediaAsync(jobId: string, filePath: string, mimeType: string, selectedFormats: Record<string, string[]>) {
   try {
     // Update status to processing
     await storage.updateUploadJob(jobId, { 
@@ -205,29 +229,33 @@ async function processMediaAsync(jobId: string, filePath: string, mimeType: stri
     await storage.updateUploadJob(jobId, { progress: 30 });
 
     const results: ProcessedResult[] = [];
-    const totalFormats = platforms.reduce((acc, platformId) => {
-      const platform = PLATFORM_CONFIGS.find(p => p.id === platformId);
-      return acc + (platform?.formats.length || 0);
+
+    // Calculate total formats to process
+    const totalFormats = Object.entries(selectedFormats).reduce((acc, [platformId, formatNames]) => {
+      return acc + formatNames.length;
     }, 0);
 
     let processedFormats = 0;
 
-    // Process for each platform
-    for (const platformId of platforms) {
+    // Process for each platform and selected formats
+    for (const [platformId, formatNames] of Object.entries(selectedFormats)) {
       const platform = PLATFORM_CONFIGS.find(p => p.id === platformId);
       if (!platform) continue;
 
-      for (const format of platform.formats) {
+      for (const formatName of formatNames) {
+        const format = platform.formats.find(f => f.name === formatName);
+        if (!format) continue;
+
         try {
           const outputPath = await processMedia(
-            filePath, 
-            mimeType, 
-            format.dimensions, 
-            platformId, 
+            filePath,
+            mimeType,
+            format.dimensions,
+            platformId,
             format.name,
             subjectAnalysis
           );
-          
+
           const stats = fs.statSync(outputPath);
           results.push({
             platform: platform.name,
@@ -241,7 +269,7 @@ async function processMediaAsync(jobId: string, filePath: string, mimeType: stri
           processedFormats++;
           const progress = 30 + Math.round((processedFormats / totalFormats) * 60);
           await storage.updateUploadJob(jobId, { progress });
-          
+
         } catch (error) {
           console.error(`Error processing ${platformId} ${format.name}:`, error);
         }
@@ -288,7 +316,7 @@ async function processMedia(
 
   try {
     // Use Python script for advanced processing
-    const { spawn } = require('child_process');
+    const { spawn } = await import('child_process');
     
     const args = [
       path.join(process.cwd(), 'server', 'media_processor.py'),

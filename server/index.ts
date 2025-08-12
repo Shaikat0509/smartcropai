@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import path from "path";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -47,11 +48,23 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // Serve the React app - use a simple static approach for Node.js 16 compatibility
   if (app.get("env") === "development") {
-    await setupVite(app, server);
+    // Serve our custom HTML file for the root route
+    app.get("/", (req, res) => {
+      res.sendFile(path.resolve(process.cwd(), "client", "simple.html"));
+    });
+
+    // Serve static files for other assets
+    app.use(express.static("client"));
+
+    // Catch-all for other routes
+    app.get("*", (req, res) => {
+      if (req.path.startsWith("/api")) {
+        return res.status(404).json({ message: "API endpoint not found" });
+      }
+      res.sendFile(path.resolve(process.cwd(), "client", "simple.html"));
+    });
   } else {
     serveStatic(app);
   }
@@ -61,11 +74,8 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, "127.0.0.1", () => {
     log(`serving on port ${port}`);
   });
+
 })();
