@@ -267,7 +267,7 @@ async function processMediaAsync(jobId: string, filePath: string, mimeType: stri
   }
 }
 
-// Process media for specific dimensions
+// Process media for specific dimensions using advanced Python tools
 async function processMedia(
   inputPath: string, 
   mimeType: string, 
@@ -281,63 +281,106 @@ async function processMedia(
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputPath = path.join(outputDir, `${platform}-${format}-${Date.now()}.jpg`);
+  const timestamp = Date.now();
+  const mediaType = mimeType.startsWith('image/') ? 'image' : 'video';
+  const extension = mediaType === 'image' ? 'jpg' : 'mp4';
+  const outputPath = path.join(outputDir, `${platform}-${format}-${timestamp}.${extension}`);
 
-  if (mimeType.startsWith('image/')) {
-    let sharpInstance = sharp(inputPath);
+  try {
+    // Use Python script for advanced processing
+    const { spawn } = require('child_process');
     
-    // Get original image metadata
-    const metadata = await sharpInstance.metadata();
-    const originalWidth = metadata.width || 1920;
-    const originalHeight = metadata.height || 1080;
+    const args = [
+      path.join(process.cwd(), 'server', 'media_processor.py'),
+      inputPath,
+      outputPath,
+      dimensions.width.toString(),
+      dimensions.height.toString(),
+      mediaType
+    ];
 
-    // Smart cropping based on AI analysis
-    if (subjectAnalysis?.bounding_box) {
-      const bbox = subjectAnalysis.bounding_box;
-      const cropX = Math.round((bbox.x / 100) * originalWidth);
-      const cropY = Math.round((bbox.y / 100) * originalHeight);
-      const cropWidth = Math.round((bbox.width / 100) * originalWidth);
-      const cropHeight = Math.round((bbox.height / 100) * originalHeight);
-      
-      // Extract region of interest first
-      sharpInstance = sharpInstance.extract({
-        left: Math.max(0, cropX),
-        top: Math.max(0, cropY),
-        width: Math.min(cropWidth, originalWidth - cropX),
-        height: Math.min(cropHeight, originalHeight - cropY)
-      });
+    // Add subject analysis if available
+    if (subjectAnalysis) {
+      args.push(JSON.stringify(subjectAnalysis));
     }
 
-    // Resize to target dimensions
-    await sharpInstance
-      .resize(dimensions.width, dimensions.height, {
-        fit: 'cover',
-        position: 'center'
-      })
-      .jpeg({ 
-        quality: 85,
-        progressive: true
-      })
-      .toFile(outputPath);
-  } else {
-    // For videos, create a thumbnail for now
-    // In production, you'd use FFmpeg to process videos
-    const thumbnailPath = path.join(outputDir, `${platform}-${format}-thumb-${Date.now()}.jpg`);
-    
-    // Create a placeholder thumbnail
-    await sharp({
-      create: {
-        width: dimensions.width,
-        height: dimensions.height,
-        channels: 3,
-        background: { r: 100, g: 100, b: 100 }
-      }
-    })
-    .jpeg({ quality: 85 })
-    .toFile(thumbnailPath);
-    
-    return thumbnailPath;
-  }
+    return new Promise((resolve, reject) => {
+      const python = spawn('python3', args);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      python.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+      
+      python.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+      
+      python.on('close', (code: number) => {
+        if (code === 0) {
+          try {
+            const result = JSON.parse(stdout.trim());
+            if (result.success) {
+              console.log(`Successfully processed ${mediaType} with advanced tools`);
+              resolve(result.output_path);
+            } else {
+              console.error('Python processing failed:', result.error);
+              reject(new Error(result.error || 'Python processing failed'));
+            }
+          } catch (parseError) {
+            console.error('Failed to parse Python output:', stdout, stderr);
+            reject(new Error('Failed to parse processing result'));
+          }
+        } else {
+          console.error(`Python script exited with code ${code}:`, stderr);
+          reject(new Error(`Processing failed with code ${code}`));
+        }
+      });
+      
+      python.on('error', (error: Error) => {
+        console.error('Failed to start Python script:', error);
+        reject(error);
+      });
+    });
 
-  return outputPath;
+  } catch (error) {
+    console.error('Error in advanced media processing:', error);
+    
+    // Fallback to Sharp for images if Python processing fails
+    if (mimeType.startsWith('image/')) {
+      console.log('Falling back to Sharp processing for image');
+      const fallbackPath = path.join(outputDir, `${platform}-${format}-fallback-${timestamp}.jpg`);
+      
+      await sharp(inputPath)
+        .resize(dimensions.width, dimensions.height, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .jpeg({ 
+          quality: 85,
+          progressive: true
+        })
+        .toFile(fallbackPath);
+      
+      return fallbackPath;
+    } else {
+      // For videos, create a placeholder if FFmpeg fails
+      const placeholderPath = path.join(outputDir, `${platform}-${format}-placeholder-${timestamp}.jpg`);
+      
+      await sharp({
+        create: {
+          width: dimensions.width,
+          height: dimensions.height,
+          channels: 3,
+          background: { r: 100, g: 100, b: 100 }
+        }
+      })
+      .jpeg({ quality: 85 })
+      .toFile(placeholderPath);
+      
+      return placeholderPath;
+    }
+  }
 }

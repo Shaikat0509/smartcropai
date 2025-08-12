@@ -20,8 +20,15 @@ Preferred communication style: Simple, everyday language.
 - **Express.js**: Node.js web server framework handling API routes and middleware
 - **TypeScript**: End-to-end type safety with shared schema definitions
 - **File Upload System**: Multer middleware for handling multipart file uploads with size limits (500MB)
-- **Image Processing**: Sharp library for image manipulation and optimization
-- **AI Integration**: OpenAI GPT-4o for intelligent content analysis and optimization decisions
+- **Advanced Media Processing**: 
+  - **Python Integration**: Custom Python scripts for enhanced media processing
+  - **OpenCV**: Computer vision library for intelligent subject detection using Haar cascades and contour detection
+  - **Pillow (PIL)**: Advanced image processing with smart cropping and quality enhancement
+  - **FFmpeg**: Professional video processing with smart cropping and optimization
+  - **Sharp**: Fallback image processing library for reliability
+- **AI Integration**: 
+  - **OpenAI GPT-4o**: Intelligent content analysis and optimization decisions
+  - **OpenCV Subject Detection**: Face detection and object recognition for smart cropping
 - **RESTful API**: Clean API design with proper error handling and logging
 
 ## Data Storage
