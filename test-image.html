@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Image Upload</title>
+</head>
+<body>
+    <h1>Test File Upload</h1>
+    <form action="/api/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="image/*" required>
+        <input type="hidden" name="platforms" value='["instagram","facebook"]'>
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>
