@@ -17,6 +17,18 @@ if (!globalThis.fetch) {
   globalThis.Response = Response as any;
 }
 
+// Add Blob polyfill for OpenAI
+if (!globalThis.Blob) {
+  const { Blob } = await import('buffer');
+  globalThis.Blob = Blob as any;
+}
+
+// Add FormData polyfill if needed
+if (!globalThis.FormData) {
+  const { FormData } = await import('formdata-node');
+  globalThis.FormData = FormData as any;
+}
+
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -311,7 +323,23 @@ async function processMedia(
 
   const timestamp = Date.now();
   const mediaType = mimeType.startsWith('image/') ? 'image' : 'video';
-  const extension = mediaType === 'image' ? 'jpg' : 'mp4';
+
+  // Preserve original format for images, use mp4 for videos
+  let extension = 'jpg'; // default
+  if (mediaType === 'image') {
+    if (mimeType === 'image/png') {
+      extension = 'png';
+    } else if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+      extension = 'jpg';
+    } else if (mimeType === 'image/webp') {
+      extension = 'webp';
+    } else if (mimeType === 'image/gif') {
+      extension = 'gif';
+    }
+  } else {
+    extension = 'mp4';
+  }
+
   const outputPath = path.join(outputDir, `${platform}-${format}-${timestamp}.${extension}`);
 
   try {

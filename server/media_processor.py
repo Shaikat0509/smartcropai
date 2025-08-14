@@ -54,27 +54,68 @@ def detect_subject_opencv(image_path):
                 'confidence': 0.9
             }
         
-        # If no faces, try edge detection for prominent objects
+        # If no faces, try enhanced detection for text and objects
         edges = cv2.Canny(gray, 50, 150)
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+
         if contours:
-            # Find the largest contour
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, cw, ch = cv2.boundingRect(largest_contour)
-            
-            # Only consider if it's a significant portion of the image
-            if (cw * ch) > (w * h * 0.1):
+            # Filter and analyze contours for text-like regions and objects
+            valid_contours = []
+            min_area = (w * h) * 0.005  # At least 0.5% of image area
+            max_area = (w * h) * 0.8    # At most 80% of image area
+
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if min_area < area < max_area:
+                    x, y, cw, ch = cv2.boundingRect(contour)
+                    aspect_ratio = cw / ch if ch > 0 else 0
+
+                    # Score contours based on size, position, and aspect ratio
+                    score = area
+
+                    # Boost score for text-like aspect ratios
+                    if 0.2 < aspect_ratio < 8:
+                        score *= 1.5
+
+                    # Boost score for central regions
+                    center_x = x + cw/2
+                    center_y = y + ch/2
+                    distance_from_center = ((center_x - w/2)**2 + (center_y - h/2)**2)**0.5
+                    max_distance = ((w/2)**2 + (h/2)**2)**0.5
+                    centrality = 1 - (distance_from_center / max_distance)
+                    score *= (1 + centrality * 0.5)
+
+                    valid_contours.append((x, y, cw, ch, area, score))
+
+            if valid_contours:
+                # Find the highest scoring contour
+                best_contour = max(valid_contours, key=lambda x: x[5])
+                x, y, cw, ch, area, score = best_contour
+
+                # Add padding around detected region
+                padding = 0.15
+                px = max(0, int(x - cw * padding))
+                py = max(0, int(y - ch * padding))
+                pw = min(w - px, int(cw * (1 + 2 * padding)))
+                ph = min(h - py, int(ch * (1 + 2 * padding)))
+
+                # Determine subject type based on aspect ratio
+                aspect_ratio = cw / ch if ch > 0 else 1
+                if 0.3 < aspect_ratio < 5:
+                    subject_type = 'Text or content detected'
+                else:
+                    subject_type = 'Main object detected'
+
                 return {
-                    'main_subject': 'Main object detected',
+                    'main_subject': subject_type,
                     'bounding_box': {
-                        'x': (x / w) * 100,
-                        'y': (y / h) * 100,
-                        'width': (cw / w) * 100,
-                        'height': (ch / h) * 100
+                        'x': (px / w) * 100,
+                        'y': (py / h) * 100,
+                        'width': (pw / w) * 100,
+                        'height': (ph / h) * 100
                     },
                     'focal_points': [{'x': (x + cw/2) / w * 100, 'y': (y + ch/2) / h * 100}],
-                    'confidence': 0.7
+                    'confidence': min(0.8, 0.4 + (area / (w * h)) * 2)
                 }
         
         # Default to center crop
@@ -100,6 +141,12 @@ def smart_crop_image(input_path, output_path, target_width, target_height, subje
     """
     try:
         with Image.open(input_path) as img:
+            # Convert palette images to RGB to avoid filtering issues
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            elif img.mode == 'L':
+                img = img.convert('RGB')
+
             original_width, original_height = img.size
             target_ratio = target_width / target_height
             original_ratio = original_width / original_height
@@ -154,9 +201,24 @@ def smart_crop_image(input_path, output_path, target_width, target_height, subje
             # Enhance image quality
             enhancer = ImageEnhance.Sharpness(resized)
             enhanced = enhancer.enhance(1.1)
-            
+
+            # Handle different image formats properly
+            output_format = 'JPEG'
+            save_kwargs = {'quality': 85, 'optimize': True, 'progressive': True}
+
+            # Convert RGBA to RGB for JPEG, or keep original format for PNG
+            if enhanced.mode == 'RGBA':
+                if output_path.lower().endswith('.png'):
+                    output_format = 'PNG'
+                    save_kwargs = {'optimize': True}
+                else:
+                    # Convert RGBA to RGB for JPEG
+                    background = Image.new('RGB', enhanced.size, (255, 255, 255))
+                    background.paste(enhanced, mask=enhanced.split()[-1])
+                    enhanced = background
+
             # Save with optimization
-            enhanced.save(output_path, 'JPEG', quality=85, optimize=True, progressive=True)
+            enhanced.save(output_path, output_format, **save_kwargs)
             
             return True
             
