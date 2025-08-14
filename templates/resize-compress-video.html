@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resize & Compress Videos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: 0.5rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #ef4444;
+            background-color: #fef2f2;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 0.5rem;
+            background-color: #e5e7eb;
+            border-radius: 0.25rem;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #ef4444;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex items-center justify-between">
+                <h1 class="text-2xl font-bold text-gray-900">🎨 Media Tools</h1>
+                <nav class="hidden md:flex space-x-6">
+                    <a href="/" class="text-gray-600 hover:text-gray-900">Home</a>
+                    <a href="/resize-image" class="text-gray-600 hover:text-gray-900">Resize Images</a>
+                    <a href="/optimize-convert" class="text-gray-600 hover:text-gray-900">Optimize Images</a>
+                    <a href="/resize-compress-video" class="text-red-600 font-semibold">Process Videos</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Page Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-900 mb-4">Resize & Compress Videos</h1>
+            <p class="text-xl text-gray-600">Optimize your videos for social media platforms with perfect dimensions and compression</p>
+        </div>
+
+        <!-- Upload Form -->
+        <div class="bg-white rounded-lg shadow-lg p-8 mb-8">
+            <form id="videoForm" enctype="multipart/form-data">
+                <!-- File Upload -->
+                <div class="mb-8">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Upload Video</label>
+                    <div class="upload-zone p-8 text-center" onclick="document.getElementById('videoInput').click()">
+                        <input type="file" id="videoInput" name="video" accept="video/*" class="hidden" required>
+                        <div id="uploadText">
+                            <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <p class="text-lg font-medium text-gray-900">Drop your video here</p>
+                            <p class="text-gray-600">or click to browse files</p>
+                            <p class="text-sm text-gray-500 mt-2">Supports MP4, MOV, AVI up to 150MB</p>
+                        </div>
+                        <div id="filePreview" class="hidden">
+                            <video id="previewVideo" class="mx-auto max-h-32 rounded-lg mb-4" controls muted></video>
+                            <p id="fileName" class="font-medium text-gray-900"></p>
+                            <p id="fileSize" class="text-sm text-gray-500"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Platform Selection -->
+                <div class="mb-8">
+                    <label class="block text-sm font-medium text-gray-700 mb-4">Select Platform & Resolution (Multiple Selection)</label>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="platformOptions">
+                        <!-- Platform options will be loaded here -->
+                    </div>
+                    <p class="text-sm text-gray-500 mt-2">✓ Select multiple platforms to generate videos for all at once</p>
+                </div>
+
+                <!-- Custom Dimensions -->
+                <div class="mb-8">
+                    <label class="block text-sm font-medium text-gray-700 mb-4">Or Use Custom Dimensions</label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Width (px)</label>
+                            <input type="number" id="customWidth" name="customWidth" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="1920">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Height (px)</label>
+                            <input type="number" id="customHeight" name="customHeight" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="1080">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Compression Settings -->
+                <div class="mb-8">
+                    <label class="block text-sm font-medium text-gray-700 mb-4">Compression Settings</label>
+                    <div class="space-y-4">
+                        <div class="flex items-center">
+                            <input type="checkbox" id="compress" name="compress" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded">
+                            <label for="compress" class="ml-2 block text-sm text-gray-700">
+                                Enable compression (reduces file size)
+                            </label>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-2">Quality: <span id="qualityValue">23</span> (lower = better quality)</label>
+                            <input type="range" id="qualitySlider" name="quality" min="18" max="32" value="23" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>Best quality (larger file)</span>
+                                <span>Smaller file (lower quality)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" id="submitBtn" class="w-full bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors disabled:bg-gray-400">
+                    Process Video
+                </button>
+            </form>
+        </div>
+
+        <!-- Progress -->
+        <div id="progressSection" class="bg-white rounded-lg shadow-lg p-8 mb-8 hidden">
+            <div class="text-center mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">Processing Video...</h3>
+                <p class="text-gray-600">This may take a few minutes depending on video size</p>
+            </div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="resultsSection" class="bg-white rounded-lg shadow-lg p-8 hidden">
+            <div class="text-center mb-6">
+                <h3 class="text-2xl font-bold text-green-600 mb-2">✅ Video Processed Successfully!</h3>
+                <p class="text-gray-600">Your video has been resized and optimized</p>
+            </div>
+            
+            <div id="resultContent" class="text-center">
+                <!-- Result content will be populated here -->
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let selectedFile = null;
+        let videoPlatforms = {};
+
+        // Quality slider handling
+        document.getElementById('qualitySlider').addEventListener('input', function() {
+            document.getElementById('qualityValue').textContent = this.value;
+        });
+
+        // Load video platform configurations
+        async function loadVideoPlatforms() {
+            try {
+                const response = await fetch('/api/video-platforms');
+                videoPlatforms = await response.json();
+                renderPlatformOptions();
+            } catch (error) {
+                console.error('Failed to load video platforms:', error);
+            }
+        }
+
+        // Render platform options
+        function renderPlatformOptions() {
+            const container = document.getElementById('platformOptions');
+            container.innerHTML = '';
+
+            Object.entries(videoPlatforms).forEach(([key, config]) => {
+                const option = document.createElement('div');
+                option.className = 'border border-gray-200 rounded-lg p-4 cursor-pointer hover:border-red-500 hover:bg-red-50 transition-colors';
+                option.innerHTML = `
+                    <input type="checkbox" name="platforms" value="${key}" id="${key}" class="hidden">
+                    <label for="${key}" class="cursor-pointer">
+                        <div class="font-medium text-gray-900">${config.name}</div>
+                        <div class="text-sm text-gray-500">${config.width} × ${config.height}</div>
+                    </label>
+                `;
+
+                option.addEventListener('click', () => {
+                    const checkbox = document.getElementById(key);
+                    checkbox.checked = !checkbox.checked;
+
+                    if (checkbox.checked) {
+                        option.classList.remove('border-gray-200');
+                        option.classList.add('border-red-500', 'bg-red-50');
+                    } else {
+                        option.classList.remove('border-red-500', 'bg-red-50');
+                        option.classList.add('border-gray-200');
+                    }
+
+                    // Clear custom dimensions when platforms are selected
+                    if (getSelectedPlatforms().length > 0) {
+                        document.getElementById('customWidth').value = '';
+                        document.getElementById('customHeight').value = '';
+                    }
+                });
+
+                container.appendChild(option);
+            });
+        }
+
+        function getSelectedPlatforms() {
+            return Array.from(document.querySelectorAll('input[name="platforms"]:checked')).map(cb => cb.value);
+        }
+
+        // File handling
+        document.getElementById('videoInput').addEventListener('change', handleFileSelect);
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                showFilePreview(file);
+            }
+        }
+
+        function showFilePreview(file) {
+            const uploadText = document.getElementById('uploadText');
+            const filePreview = document.getElementById('filePreview');
+            const previewVideo = document.getElementById('previewVideo');
+            const fileName = document.getElementById('fileName');
+            const fileSize = document.getElementById('fileSize');
+
+            uploadText.classList.add('hidden');
+            filePreview.classList.remove('hidden');
+
+            const url = URL.createObjectURL(file);
+            previewVideo.src = url;
+
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Form submission
+        document.getElementById('videoForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!selectedFile) {
+                alert('Please select a video file');
+                return;
+            }
+
+            const selectedPlatforms = getSelectedPlatforms();
+            const customWidth = document.getElementById('customWidth').value;
+            const customHeight = document.getElementById('customHeight').value;
+
+            if (selectedPlatforms.length === 0 && (!customWidth || !customHeight)) {
+                alert('Please select at least one platform or enter custom dimensions');
+                return;
+            }
+
+            showProgress();
+
+            try {
+                const results = [];
+
+                // Process for selected platforms
+                for (const platform of selectedPlatforms) {
+                    const formData = new FormData();
+                    formData.append('video', selectedFile);
+                    formData.append('platform', platform);
+                    formData.append('compress', document.getElementById('compress').checked);
+                    formData.append('quality', document.getElementById('qualitySlider').value);
+
+                    const response = await fetch('/api/resize-compress-video', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    if (response.ok) {
+                        results.push(result);
+                    } else {
+                        console.error(`Failed to process ${platform}:`, result.error);
+                    }
+                }
+
+                // Process custom dimensions if provided
+                if (customWidth && customHeight && selectedPlatforms.length === 0) {
+                    const formData = new FormData();
+                    formData.append('video', selectedFile);
+                    formData.append('customWidth', customWidth);
+                    formData.append('customHeight', customHeight);
+                    formData.append('compress', document.getElementById('compress').checked);
+                    formData.append('quality', document.getElementById('qualitySlider').value);
+
+                    const response = await fetch('/api/resize-compress-video', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    if (response.ok) {
+                        results.push(result);
+                    }
+                }
+
+                if (results.length > 0) {
+                    showResults(results);
+                } else {
+                    throw new Error('All processing failed');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                hideProgress();
+            }
+        });
+
+        function showProgress() {
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('submitBtn').textContent = 'Processing...';
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
+            
+            // Simulate progress (video processing takes longer)
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 5;
+                document.getElementById('progressFill').style.width = progress + '%';
+                if (progress >= 90) {
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+
+        function hideProgress() {
+            document.getElementById('submitBtn').disabled = false;
+            document.getElementById('submitBtn').textContent = 'Process Video';
+            document.getElementById('progressSection').classList.add('hidden');
+        }
+
+        function showResults(results) {
+            hideProgress();
+
+            const resultContent = document.getElementById('resultContent');
+
+            if (Array.isArray(results)) {
+                // Multiple results
+                let html = `<div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-900 mb-2">✅ ${results.length} Videos Generated</h4>
+                    <p class="text-gray-600">All selected platforms have been processed</p>
+                </div>`;
+
+                html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">';
+
+                results.forEach(result => {
+                    html += `
+                        <div class="border border-gray-200 rounded-lg p-4">
+                            <h5 class="font-semibold text-gray-900 mb-2">${result.platform}</h5>
+                            <p class="text-sm text-gray-600 mb-2">${result.dimensions.width} × ${result.dimensions.height} pixels</p>
+                            <p class="text-sm text-gray-500 mb-2">${formatFileSize(result.processedSize)} (${result.compressionRatio} reduction)</p>
+                            <a href="${result.downloadUrl}" download class="inline-block bg-red-600 text-white py-2 px-4 rounded text-sm font-medium hover:bg-red-700 transition-colors">
+                                📥 Download
+                            </a>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+
+                // Download all button
+                html += `
+                    <div class="text-center">
+                        <button onclick="downloadAll()" class="bg-green-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-green-700 transition-colors">
+                            📥 Download All Videos
+                        </button>
+                    </div>
+                `;
+
+                resultContent.innerHTML = html;
+            } else {
+                // Single result
+                resultContent.innerHTML = `
+                    <div class="mb-6">
+                        <h4 class="text-lg font-semibold text-gray-900 mb-2">${results.platform}</h4>
+                        <p class="text-gray-600">${results.dimensions.width} × ${results.dimensions.height} pixels</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div class="text-center">
+                            <p class="text-sm text-gray-600 mb-1">Original Size</p>
+                            <p class="text-lg font-semibold">${formatFileSize(results.originalSize)}</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm text-gray-600 mb-1">Processed Size</p>
+                            <p class="text-lg font-semibold">${formatFileSize(results.processedSize)}</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm text-gray-600 mb-1">Size Reduction</p>
+                            <p class="text-lg font-semibold text-green-600">${results.compressionRatio}</p>
+                        </div>
+                    </div>
+
+                    <a href="${results.downloadUrl}" download class="inline-block bg-red-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-red-700 transition-colors">
+                        📥 Download Processed Video
+                    </a>
+                `;
+            }
+
+            document.getElementById('resultsSection').classList.remove('hidden');
+        }
+
+        function downloadAll() {
+            const downloadLinks = document.querySelectorAll('#resultContent a[download]');
+            downloadLinks.forEach((link, index) => {
+                setTimeout(() => {
+                    link.click();
+                }, index * 1000); // Stagger downloads by 1 second for videos
+            });
+        }
+
+        // Custom dimensions handling
+        document.getElementById('customWidth').addEventListener('input', clearPlatformSelection);
+        document.getElementById('customHeight').addEventListener('input', clearPlatformSelection);
+
+        function clearPlatformSelection() {
+            document.querySelectorAll('input[name="platforms"]').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            document.querySelectorAll('#platformOptions > div').forEach(el => {
+                el.classList.remove('border-red-500', 'bg-red-50');
+                el.classList.add('border-gray-200');
+            });
+        }
+
+        // Drag and drop
+        const uploadZone = document.querySelector('.upload-zone');
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type.startsWith('video/')) {
+                selectedFile = files[0];
+                document.getElementById('videoInput').files = files;
+                showFilePreview(files[0]);
+            }
+        });
+
+        // Initialize
+        loadVideoPlatforms();
+    </script>
+</body>
+</html>

@@ -60,7 +60,30 @@ const openai = new OpenAI({
 const OPENAI_MODEL = "gpt-4o";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  
+
+  // Serve the landing page
+  app.get("/", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "templates", "index.html"));
+  });
+
+  // Serve individual tool pages
+  app.get("/resize-image", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "templates", "resize-image.html"));
+  });
+
+  app.get("/optimize-convert", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "templates", "optimize-convert.html"));
+  });
+
+  app.get("/resize-compress-video", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "templates", "resize-compress-video.html"));
+  });
+
+  // Legacy route for the original smart crop tool
+  app.get("/smart-crop", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "client", "simple.html"));
+  });
+
   // Get all upload jobs
   app.get("/api/jobs", async (req, res) => {
     try {
