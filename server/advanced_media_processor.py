@@ -25,6 +25,13 @@ except ImportError:
     YOLO_AVAILABLE = False
     logger.warning("YOLOv8 not available. Falling back to OpenCV and MediaPipe.")
 
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+    logger.warning("MediaPipe not available.")
+
 class AdvancedMediaProcessor:
     def __init__(self):
         """Initialize the advanced media processor with AI models"""
@@ -33,19 +40,25 @@ class AdvancedMediaProcessor:
         self.mp_hands = mp.solutions.hands
         self.mp_selfie_segmentation = mp.solutions.selfie_segmentation
         
-        # Initialize MediaPipe models
-        self.face_detection = self.mp_face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.5
-        )
-        self.pose = self.mp_pose.Pose(
-            static_image_mode=True, min_detection_confidence=0.5
-        )
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=True, max_num_hands=2, min_detection_confidence=0.5
-        )
-        self.selfie_segmentation = self.mp_selfie_segmentation.SelfieSegmentation(
-            model_selection=1
-        )
+        # Initialize MediaPipe models with lower confidence thresholds
+        if MEDIAPIPE_AVAILABLE:
+            self.face_detection = self.mp_face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.3
+            )
+            self.pose = self.mp_pose.Pose(
+                static_image_mode=True, min_detection_confidence=0.3
+            )
+            self.hands = self.mp_hands.Hands(
+                static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3
+            )
+            self.selfie_segmentation = self.mp_selfie_segmentation.SelfieSegmentation(
+                model_selection=1
+            )
+        else:
+            self.face_detection = None
+            self.pose = None
+            self.hands = None
+            self.selfie_segmentation = None
         
         # Initialize YOLOv8 if available
         self.yolo_model = None
@@ -56,7 +69,7 @@ class AdvancedMediaProcessor:
                 logger.info("YOLOv8 model loaded successfully")
             except Exception as e:
                 logger.warning(f"Failed to load YOLOv8: {e}")
-                YOLO_AVAILABLE = False
+                self.yolo_model = None
 
     def detect_subjects(self, image_path):
         """
@@ -134,10 +147,10 @@ class AdvancedMediaProcessor:
                     }
                     detection_results['hands'].append(hand_info)
             
-            # 4. Object Detection with YOLOv8
-            if YOLO_AVAILABLE and self.yolo_model:
+            # 4. Object Detection with YOLOv8 (lowered confidence threshold)
+            if self.yolo_model:
                 try:
-                    yolo_results = self.yolo_model(image_path, verbose=False)
+                    yolo_results = self.yolo_model(image_path, verbose=False, conf=0.15)
                     for result in yolo_results:
                         boxes = result.boxes
                         if boxes is not None:
@@ -145,24 +158,26 @@ class AdvancedMediaProcessor:
                                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                                 conf = box.conf[0].cpu().numpy()
                                 cls = int(box.cls[0].cpu().numpy())
-                                
-                                object_info = {
-                                    'class': self.yolo_model.names[cls],
-                                    'confidence': float(conf),
-                                    'x': float(x1),
-                                    'y': float(y1),
-                                    'width': float(x2 - x1),
-                                    'height': float(y2 - y1),
-                                    'center_x': float((x1 + x2) / 2),
-                                    'center_y': float((y1 + y2) / 2)
-                                }
-                                detection_results['objects'].append(object_info)
+
+                                # Include more object types and lower confidence threshold
+                                if conf > 0.15:  # Lower threshold for better detection
+                                    object_info = {
+                                        'class': self.yolo_model.names[cls],
+                                        'confidence': float(conf),
+                                        'x': float(x1),
+                                        'y': float(y1),
+                                        'width': float(x2 - x1),
+                                        'height': float(y2 - y1),
+                                        'center_x': float((x1 + x2) / 2),
+                                        'center_y': float((y1 + y2) / 2)
+                                    }
+                                    detection_results['objects'].append(object_info)
                 except Exception as e:
                     logger.warning(f"YOLOv8 detection failed: {e}")
             
             # 5. Determine main subject and focal points
             main_subject, focal_points, bbox = self._determine_main_subject(
-                detection_results, w, h
+                detection_results, w, h, image_path
             )
             
             detection_results['main_subject'] = main_subject
@@ -175,7 +190,7 @@ class AdvancedMediaProcessor:
             logger.error(f"Subject detection failed: {e}")
             return self._fallback_detection(image_path)
 
-    def _determine_main_subject(self, detection_results, w, h):
+    def _determine_main_subject(self, detection_results, w, h, image_path):
         """Determine the main subject and optimal crop area"""
         subjects = []
         
@@ -209,9 +224,11 @@ class AdvancedMediaProcessor:
                 )
             })
         
-        # Add significant objects (lower priority)
+        # Add significant objects (lower priority) - relaxed thresholds
         for obj in detection_results['objects']:
-            if obj['confidence'] > 0.5 and obj['width'] * obj['height'] > (w * h * 0.05):
+            # Lower confidence threshold and smaller area requirement
+            min_area_ratio = 0.01  # 1% of image instead of 5%
+            if obj['confidence'] > 0.2 and obj['width'] * obj['height'] > (w * h * min_area_ratio):
                 subjects.append({
                     'type': f"object_{obj['class']}",
                     'confidence': obj['confidence'],
@@ -221,7 +238,8 @@ class AdvancedMediaProcessor:
                 })
         
         if not subjects:
-            return "No subjects detected", [(w/2, h/2)], None
+            # Use content-aware fallback detection
+            return self._content_aware_fallback(image_path, w, h)
         
         # Sort by priority: faces > poses > objects, then by confidence and area
         def subject_score(s):
@@ -257,6 +275,85 @@ class AdvancedMediaProcessor:
         
         return best_subject['type'], focal_points_pct, bbox_pct
 
+    def _content_aware_fallback(self, image_path, w, h):
+        """Content-aware fallback using OpenCV features when AI detection fails"""
+        try:
+            image = cv2.imread(image_path)
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # 1. Try edge detection to find interesting regions
+            edges = cv2.Canny(gray, 50, 150)
+
+            # 2. Find contours for potential subjects
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # 3. Analyze contours for significant shapes
+            significant_contours = []
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > (w * h * 0.005):  # At least 0.5% of image
+                    x, y, cw, ch = cv2.boundingRect(contour)
+                    aspect_ratio = cw / ch
+                    # Prefer more square-like shapes (potential subjects)
+                    if 0.3 < aspect_ratio < 3.0:
+                        significant_contours.append({
+                            'area': area,
+                            'center': (x + cw/2, y + ch/2),
+                            'bbox': (x, y, cw, ch),
+                            'aspect_ratio': aspect_ratio
+                        })
+
+            # 4. Use rule of thirds if no significant contours
+            if not significant_contours:
+                # Rule of thirds focal points
+                focal_points = [
+                    (w * 0.33, h * 0.33),  # Top-left third
+                    (w * 0.67, h * 0.33),  # Top-right third
+                    (w * 0.33, h * 0.67),  # Bottom-left third
+                    (w * 0.67, h * 0.67),  # Bottom-right third
+                ]
+
+                # Choose the point with most edge activity
+                best_point = (w/2, h/2)
+                max_activity = 0
+
+                for point in focal_points:
+                    x, y = int(point[0]), int(point[1])
+                    # Sample area around the point
+                    x1, y1 = max(0, x-50), max(0, y-50)
+                    x2, y2 = min(w, x+50), min(h, y+50)
+                    roi = edges[y1:y2, x1:x2]
+                    activity = np.sum(roi)
+
+                    if activity > max_activity:
+                        max_activity = activity
+                        best_point = point
+
+                return "Rule of thirds composition", [best_point], {
+                    'x': (best_point[0] - w*0.25) / w * 100,
+                    'y': (best_point[1] - h*0.25) / h * 100,
+                    'width': 50,
+                    'height': 50
+                }
+
+            # 5. Use largest significant contour
+            best_contour = max(significant_contours, key=lambda c: c['area'])
+            x, y, cw, ch = best_contour['bbox']
+
+            return "Content-aware detection", [best_contour['center']], {
+                'x': x / w * 100,
+                'y': y / h * 100,
+                'width': cw / w * 100,
+                'height': ch / h * 100
+            }
+
+        except Exception as e:
+            logger.warning(f"Content-aware fallback failed: {e}")
+            # Ultimate fallback - center crop
+            return "Center composition", [(w/2, h/2)], {
+                'x': 25, 'y': 25, 'width': 50, 'height': 50
+            }
+
     def _fallback_detection(self, image_path):
         """Fallback detection using traditional OpenCV methods"""
         try:
@@ -284,14 +381,13 @@ class AdvancedMediaProcessor:
                     'confidence': 0.7
                 }
             
-            # Fallback to center crop
+            # Use content-aware fallback
+            main_subject, focal_points, bbox = self._content_aware_fallback(image_path, w, h)
             return {
-                'main_subject': 'Center crop (fallback)',
-                'focal_points': [{'x': 50, 'y': 50}],
-                'bounding_box': {
-                    'x': 25, 'y': 25, 'width': 50, 'height': 50
-                },
-                'confidence': 0.3
+                'main_subject': main_subject,
+                'focal_points': [{'x': fp[0] / w * 100, 'y': fp[1] / h * 100} for fp in focal_points],
+                'bounding_box': bbox,
+                'confidence': 0.4
             }
             
         except Exception as e:
@@ -330,24 +426,42 @@ def main():
             
             original_width, original_height = img.size
             
-            # Determine crop area based on detection results
+            # Calculate optimal crop area that maintains target aspect ratio
+            target_ratio = target_width / target_height
+            original_ratio = original_width / original_height
+
             if detection_results['bounding_box']:
                 bbox = detection_results['bounding_box']
-                crop_x = int((bbox['x'] / 100) * original_width)
-                crop_y = int((bbox['y'] / 100) * original_height)
-                crop_width = int((bbox['width'] / 100) * original_width)
-                crop_height = int((bbox['height'] / 100) * original_height)
-                
-                # Ensure crop area is within image bounds
-                crop_x = max(0, min(crop_x, original_width - 1))
-                crop_y = max(0, min(crop_y, original_height - 1))
-                crop_width = min(crop_width, original_width - crop_x)
-                crop_height = min(crop_height, original_height - crop_y)
-                
-                # Crop to detected subject area
-                img = img.crop((crop_x, crop_y, crop_x + crop_width, crop_y + crop_height))
-            
-            # Resize to target dimensions
+                # Get subject center point
+                subject_center_x = (bbox['x'] + bbox['width'] / 2) / 100 * original_width
+                subject_center_y = (bbox['y'] + bbox['height'] / 2) / 100 * original_height
+            else:
+                # Default to image center
+                subject_center_x = original_width / 2
+                subject_center_y = original_height / 2
+
+            # Calculate crop dimensions that maintain target aspect ratio
+            if target_ratio > original_ratio:
+                # Target is wider - use full width, crop height
+                crop_width = original_width
+                crop_height = int(crop_width / target_ratio)
+                crop_x = 0
+                # Center crop around subject vertically
+                crop_y = int(subject_center_y - crop_height / 2)
+                crop_y = max(0, min(crop_y, original_height - crop_height))
+            else:
+                # Target is taller - use full height, crop width
+                crop_height = original_height
+                crop_width = int(crop_height * target_ratio)
+                crop_y = 0
+                # Center crop around subject horizontally
+                crop_x = int(subject_center_x - crop_width / 2)
+                crop_x = max(0, min(crop_x, original_width - crop_width))
+
+            # Perform the smart crop
+            img = img.crop((crop_x, crop_y, crop_x + crop_width, crop_y + crop_height))
+
+            # Resize to target dimensions (no stretching since aspect ratio matches)
             img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
             # Enhance image quality

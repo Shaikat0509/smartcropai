@@ -79,7 +79,75 @@ export function registerVideoRoutes(app: Express) {
       const outputFilename = `processed-${nanoid()}.mp4`;
       const outputPath = path.join(outputDir, outputFilename);
 
-      // Build FFmpeg command
+      // Use advanced AI-powered video processing
+      try {
+        const pythonProcess = spawn('python3', [
+          path.join(process.cwd(), 'server', 'advanced_video_processor.py'),
+          req.file.path,
+          outputPath,
+          config.width.toString(),
+          config.height.toString(),
+          quality || 'medium',
+          compress === 'true' ? 'true' : 'false'
+        ]);
+
+        let pythonOutput = '';
+        let pythonError = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+          pythonOutput += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+          pythonError += data.toString();
+        });
+
+        const processResult = await new Promise((resolve, reject) => {
+          pythonProcess.on('close', (code) => {
+            if (code === 0) {
+              try {
+                const result = JSON.parse(pythonOutput);
+                resolve(result);
+              } catch (e) {
+                resolve({ success: true, method: 'basic_processing' });
+              }
+            } else {
+              reject(new Error(pythonError || 'AI video processing failed'));
+            }
+          });
+          pythonProcess.on('error', reject);
+        });
+
+        // If AI processing succeeded, return success
+        if (processResult.success) {
+          const stats = fs.statSync(outputPath);
+          const originalStats = fs.statSync(req.file.path);
+          const compressionRatio = ((originalStats.size - stats.size) / originalStats.size * 100).toFixed(1);
+
+          // Clean up original file
+          fs.unlinkSync(req.file.path);
+
+          res.json({
+            success: true,
+            filename: outputFilename,
+            platform: config.name,
+            dimensions: { width: config.width, height: config.height },
+            originalSize: originalStats.size,
+            processedSize: stats.size,
+            compressionRatio: `${compressionRatio}%`,
+            downloadUrl: `/api/download/videos/${outputFilename}`,
+            aiProcessing: {
+              method: processResult.crop_method || 'ai_detected',
+              detectionsFound: processResult.detections_found || 0
+            }
+          });
+          return;
+        }
+      } catch (error) {
+        console.log('AI video processing failed, falling back to basic FFmpeg:', error.message);
+      }
+
+      // Fallback to basic FFmpeg processing
       const ffmpegArgs = [
         '-i', req.file.path,
         '-vf', `scale=${config.width}:${config.height}:force_original_aspect_ratio=decrease,pad=${config.width}:${config.height}:(ow-iw)/2:(oh-ih)/2`,

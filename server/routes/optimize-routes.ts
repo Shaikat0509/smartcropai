@@ -4,6 +4,7 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs";
 import { nanoid } from "nanoid";
+import { spawn } from "child_process";
 
 // Configure multer for image uploads
 const optimizeStorage = multer.diskStorage({
@@ -22,7 +23,7 @@ const optimizeStorage = multer.diskStorage({
 
 const optimizeUpload = multer({
   storage: optimizeStorage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit per file
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -42,9 +43,29 @@ export function registerOptimizeRoutes(app: Express) {
 
       const { format, losslessOptimize, reduceDimensions, reduction } = req.body;
 
-      // Validate format
-      const allowedFormats = ['jpeg', 'png', 'webp'];
-      const outputFormat = format && allowedFormats.includes(format) ? format : 'jpeg';
+      // Validate format and determine output format
+      const allowedFormats = ['jpeg', 'png', 'webp', 'original'];
+      let outputFormat = format && allowedFormats.includes(format) ? format : 'original';
+
+      // If 'original' is selected, detect the original format
+      if (outputFormat === 'original') {
+        const originalExt = path.extname(req.file.originalname).toLowerCase();
+        switch (originalExt) {
+          case '.jpg':
+          case '.jpeg':
+            outputFormat = 'jpeg';
+            break;
+          case '.png':
+            outputFormat = 'png';
+            break;
+          case '.webp':
+            outputFormat = 'webp';
+            break;
+          default:
+            // Default to JPEG for unknown formats
+            outputFormat = 'jpeg';
+        }
+      }
 
       // Parse settings
       const isLossless = losslessOptimize === 'true';
@@ -60,82 +81,129 @@ export function registerOptimizeRoutes(app: Express) {
       const outputFilename = `optimized-${nanoid()}.${outputFormat === 'jpeg' ? 'jpg' : outputFormat}`;
       const outputPath = path.join(outputDir, outputFilename);
 
-      // Start with Sharp pipeline
-      let pipeline = sharp(req.file.path);
+      // Use professional Python optimizer for industry-best results
+      let optimizationResult;
+      let professionalOptimizationUsed = false;
 
-      // Apply dimension reduction if requested
-      if (shouldReduceDimensions) {
-        const metadata = await pipeline.metadata();
-        if (metadata.width && metadata.height) {
-          const newWidth = Math.round(metadata.width * (reductionPercent / 100));
-          const newHeight = Math.round(metadata.height * (reductionPercent / 100));
-          pipeline = pipeline.resize(newWidth, newHeight, { fit: 'inside' });
+      try {
+        // Prepare optimization options
+        const optimizationOptions = {
+          format: outputFormat, // Pass format as-is, including 'auto'
+          quality: isLossless ? 'auto' : 'auto',
+          lossless: isLossless,
+          max_width: shouldReduceDimensions ? Math.round(2000 * (reductionPercent / 100)) : null,
+          max_height: shouldReduceDimensions ? Math.round(2000 * (reductionPercent / 100)) : null
+        };
+
+        // Run professional optimizer
+        const pythonProcess = spawn('python3', [
+          path.join(process.cwd(), 'server', 'professional_image_optimizer.py'),
+          req.file.path,
+          outputPath,
+          JSON.stringify(optimizationOptions)
+        ]);
+
+        let pythonOutput = '';
+        let pythonError = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+          pythonOutput += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+          pythonError += data.toString();
+        });
+
+        await new Promise((resolve, reject) => {
+          pythonProcess.on('close', (code) => {
+            if (code === 0) {
+              try {
+                optimizationResult = JSON.parse(pythonOutput);
+                professionalOptimizationUsed = true;
+                console.log('Professional optimization results:', optimizationResult);
+                resolve(code);
+              } catch (e) {
+                reject(new Error('Failed to parse optimization results'));
+              }
+            } else {
+              reject(new Error(`Professional optimizer failed: ${pythonError}`));
+            }
+          });
+          pythonProcess.on('error', reject);
+        });
+
+      } catch (error) {
+        console.log('Professional optimization failed, using Sharp fallback:', error.message);
+
+        // Fallback to improved Sharp pipeline
+        let pipeline = sharp(req.file.path);
+
+        // Apply dimension reduction if requested
+        if (shouldReduceDimensions) {
+          const metadata = await pipeline.metadata();
+          if (metadata.width && metadata.height) {
+            const newWidth = Math.round(metadata.width * (reductionPercent / 100));
+            const newHeight = Math.round(metadata.height * (reductionPercent / 100));
+            pipeline = pipeline.resize(newWidth, newHeight, { fit: 'inside' });
+          }
         }
-      }
 
-      // Apply format-specific options with smart optimization
-      if (isLossless) {
-        // Smart lossless optimization settings
+        // Apply improved format-specific optimization
         switch (outputFormat) {
           case 'jpeg':
             pipeline = pipeline.jpeg({
-              quality: 90,
+              quality: isLossless ? 85 : 75,
               progressive: true,
               mozjpeg: true,
               optimiseScans: true,
-              optimiseCoding: true
+              optimiseCoding: true,
+              trellisQuantisation: true,
+              overshootDeringing: true
             });
             break;
           case 'png':
             pipeline = pipeline.png({
               compressionLevel: 9,
               progressive: true,
-              palette: true,
-              effort: 10
+              palette: !isLossless,
+              effort: 10,
+              adaptiveFiltering: true
             });
             break;
           case 'webp':
             pipeline = pipeline.webp({
-              quality: 90,
+              quality: isLossless ? 90 : 75,
               effort: 6,
-              smartSubsample: true
+              smartSubsample: true,
+              nearLossless: isLossless,
+              preset: 'photo'
             });
             break;
         }
-      } else {
-        // Aggressive optimization for smaller files
-        switch (outputFormat) {
-          case 'jpeg':
-            pipeline = pipeline.jpeg({
-              quality: 75,
-              progressive: true,
-              mozjpeg: true,
-              optimiseScans: true
-            });
-            break;
-          case 'png':
-            pipeline = pipeline.png({
-              compressionLevel: 9,
-              progressive: true,
-              effort: 10
-            });
-            break;
-          case 'webp':
-            pipeline = pipeline.webp({
-              quality: 80,
-              effort: 6
-            });
-            break;
-        }
-      }
 
-      // Process the image
-      await pipeline.toFile(outputPath);
+        // Process with Sharp
+        await pipeline.toFile(outputPath);
+      }
 
       // Get file stats
       const stats = fs.statSync(outputPath);
       const originalStats = fs.statSync(req.file.path);
-      const compressionRatio = ((originalStats.size - stats.size) / originalStats.size * 100).toFixed(1);
+
+      // Use professional optimization results if available, otherwise calculate manually
+      let compressionRatio, finalFormat, qualityUsed, optimizationMethod;
+
+      if (professionalOptimizationUsed && optimizationResult) {
+        compressionRatio = `${optimizationResult.compression_ratio}%`;
+        // Always use the actual output format, not what the optimizer reports
+        finalFormat = outputFormat.toUpperCase();
+        qualityUsed = optimizationResult.quality_used;
+        optimizationMethod = 'Professional AI-powered optimization';
+      } else {
+        compressionRatio = ((originalStats.size - stats.size) / originalStats.size * 100).toFixed(1) + '%';
+        finalFormat = outputFormat.toUpperCase();
+        qualityUsed = isLossless ? 'lossless' : 'auto';
+        optimizationMethod = 'Sharp-based optimization';
+      }
 
       // Clean up original file
       fs.unlinkSync(req.file.path);
@@ -143,13 +211,16 @@ export function registerOptimizeRoutes(app: Express) {
       res.json({
         success: true,
         filename: outputFilename,
-        format: outputFormat,
+        format: finalFormat,
         losslessOptimized: isLossless,
         dimensionsReduced: shouldReduceDimensions,
         reductionPercent: shouldReduceDimensions ? reductionPercent : 100,
         originalSize: originalStats.size,
         processedSize: stats.size,
-        compressionRatio: `${compressionRatio}%`,
+        compressionRatio: compressionRatio,
+        qualityUsed: qualityUsed,
+        optimizationMethod: optimizationMethod,
+        professionalOptimization: professionalOptimizationUsed,
         downloadUrl: `/api/download/optimize/${outputFilename}`
       });
 

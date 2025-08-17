@@ -67,7 +67,7 @@
                             </svg>
                             <p class="text-lg font-medium text-gray-900">Drop your image here</p>
                             <p class="text-gray-600">or click to browse files</p>
-                            <p class="text-sm text-gray-500 mt-2">Supports JPG, PNG, WebP up to 50MB</p>
+                            <p class="text-sm text-gray-500 mt-2">Supports JPG, PNG, WebP up to 5MB</p>
                         </div>
                         <div id="filePreview" class="hidden">
                             <img id="previewImage" class="mx-auto max-h-32 rounded-lg mb-4">
@@ -305,7 +305,13 @@
             document.getElementById('submitBtn').textContent = 'Processing...';
             document.getElementById('progressSection').classList.remove('hidden');
             document.getElementById('resultsSection').classList.add('hidden');
-            
+
+            // Auto-scroll to progress section
+            document.getElementById('progressSection').scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+
             // Simulate progress
             let progress = 0;
             const interval = setInterval(() => {
@@ -338,12 +344,21 @@
                 html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">';
 
                 results.forEach(result => {
+                    // Show AI detection info if available
+                    let aiInfo = '';
+                    if (result.aiProcessing) {
+                        const method = result.aiProcessing.method || 'Smart cropping applied';
+                        const detections = result.aiProcessing.detectionsFound || 0;
+                        aiInfo = `<p class="text-xs text-green-600 mb-2">🤖 ${method} (${detections} subjects detected)</p>`;
+                    }
+
                     html += `
                         <div class="border border-gray-200 rounded-lg p-4">
                             <h5 class="font-semibold text-gray-900 mb-2">${result.dimensions.name}</h5>
                             <p class="text-sm text-gray-600 mb-2">${result.dimensions.width} × ${result.dimensions.height} pixels</p>
+                            ${aiInfo}
                             <p class="text-sm text-gray-500 mb-3">${formatFileSize(result.processedSize)}</p>
-                            <div class="flex space-x-2">
+                            <div class="flex justify-center space-x-2">
                                 <button onclick="previewImage('${result.downloadUrl}', '${result.dimensions.name}')" class="bg-gray-600 text-white py-2 px-3 rounded text-sm font-medium hover:bg-gray-700 transition-colors">
                                     👁️ Preview
                                 </button>
@@ -396,6 +411,12 @@
             }
 
             document.getElementById('resultsSection').classList.remove('hidden');
+
+            // Auto-scroll to results section
+            document.getElementById('resultsSection').scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
         }
 
         function downloadAll() {
