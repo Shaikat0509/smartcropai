@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { registerImageRoutes } from "./routes/image-routes";
 import { registerVideoRoutes } from "./routes/video-routes";
 import { registerOptimizeRoutes } from "./routes/optimize-routes";
+import { setupCleanupRoutes } from "./routes/cleanup-routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
@@ -45,6 +46,7 @@ app.use((req, res, next) => {
   registerImageRoutes(app);
   registerVideoRoutes(app);
   registerOptimizeRoutes(app);
+  setupCleanupRoutes(app);
 
   // Then register main routes (which includes template serving)
   const server = await registerRoutes(app);

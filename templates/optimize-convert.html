@@ -35,7 +35,7 @@
     <header class="bg-white shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
             <div class="flex items-center justify-between">
-                <h1 class="text-2xl font-bold text-gray-900">🎨 Media Tools</h1>
+                <a href="/" class="text-2xl font-bold text-gray-900 hover:text-gray-700 transition-colors">🎨 Media Tools</a>
                 <nav class="hidden md:flex space-x-6">
                     <a href="/" class="text-gray-600 hover:text-gray-900">Home</a>
                     <a href="/resize-image" class="text-gray-600 hover:text-gray-900">Resize Images</a>
@@ -58,16 +58,16 @@
             <form id="optimizeForm" enctype="multipart/form-data">
                 <!-- File Upload -->
                 <div class="mb-8">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Upload Image</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Upload Images (up to 20)</label>
                     <div class="upload-zone p-8 text-center" onclick="document.getElementById('imageInput').click()">
-                        <input type="file" id="imageInput" name="image" accept="image/*" class="hidden" required>
+                        <input type="file" id="imageInput" name="images" accept="image/*" multiple class="hidden" required>
                         <div id="uploadText">
                             <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" stroke="currentColor" fill="none" viewBox="0 0 48 48">
                                 <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                             </svg>
-                            <p class="text-lg font-medium text-gray-900">Drop your image here</p>
+                            <p class="text-lg font-medium text-gray-900">Drop your images here</p>
                             <p class="text-gray-600">or click to browse files</p>
-                            <p class="text-sm text-gray-500 mt-2">Supports JPG, PNG, WebP up to 5MB</p>
+                            <p class="text-sm text-gray-500 mt-2">Supports JPG, PNG, WebP up to 5MB each • Maximum 20 images</p>
                         </div>
                         <div id="filePreview" class="hidden">
                             <img id="previewImage" class="mx-auto max-h-32 rounded-lg mb-4">
@@ -138,6 +138,14 @@
             </form>
         </div>
 
+        <!-- Uploaded Images List -->
+        <div id="uploadedImagesList" class="hidden bg-white rounded-lg shadow-lg p-6 mb-8">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">📁 Uploaded Images</h3>
+            <div id="imagesList" class="space-y-3">
+                <!-- Image items will be added here -->
+            </div>
+        </div>
+
         <!-- Progress -->
         <div id="progressSection" class="bg-white rounded-lg shadow-lg p-8 mb-8 hidden">
             <div class="text-center mb-4">
@@ -150,20 +158,27 @@
         </div>
 
         <!-- Results -->
-        <div id="resultsSection" class="bg-white rounded-lg shadow-lg p-8 hidden">
-            <div class="text-center mb-6">
-                <h3 class="text-2xl font-bold text-green-600 mb-2">✅ Image Optimized Successfully!</h3>
-                <p class="text-gray-600">Your image has been optimized and converted</p>
+        <div id="resultsSection" class="bg-white rounded-lg shadow-lg p-6 hidden">
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold text-green-600 mb-2">✅ Optimization Complete</h3>
+                <p class="text-gray-600">Your images have been optimized and are ready for download</p>
             </div>
-            
-            <div id="resultContent" class="text-center">
-                <!-- Result content will be populated here -->
+
+            <div id="optimizedImagesList" class="space-y-3 mb-6">
+                <!-- Optimized image items will be added here -->
+            </div>
+
+            <div class="text-center">
+                <button id="downloadAllZipBtn" class="bg-blue-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
+                    📦 Download All as ZIP
+                </button>
             </div>
         </div>
     </main>
 
     <script>
-        let selectedFile = null;
+        let selectedFiles = [];
+        let processedFiles = []; // Track processed files for cleanup
 
         // Reduction slider handling
         document.getElementById('reductionSlider').addEventListener('input', function() {
@@ -190,14 +205,27 @@
         document.getElementById('imageInput').addEventListener('change', handleFileSelect);
 
         function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                selectedFile = file;
-                showFilePreview(file);
+            const files = Array.from(event.target.files);
+            if (files.length > 0) {
+                if (files.length > 20) {
+                    alert('Maximum 20 images allowed. Please select fewer files.');
+                    return;
+                }
+
+                // Check file sizes
+                for (let file of files) {
+                    if (file.size > 5 * 1024 * 1024) {
+                        alert(`File "${file.name}" is larger than 5MB. Please choose smaller files.`);
+                        return;
+                    }
+                }
+
+                selectedFiles = files;
+                showFilePreview(files);
             }
         }
 
-        function showFilePreview(file) {
+        function showFilePreview(files) {
             const uploadText = document.getElementById('uploadText');
             const filePreview = document.getElementById('filePreview');
             const previewImage = document.getElementById('previewImage');
@@ -207,14 +235,60 @@
             uploadText.classList.add('hidden');
             filePreview.classList.remove('hidden');
 
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImage.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
+            if (files.length === 1) {
+                // Single file preview
+                const file = files[0];
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    previewImage.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
 
-            fileName.textContent = file.name;
-            fileSize.textContent = formatFileSize(file.size);
+                fileName.textContent = file.name;
+                fileSize.textContent = formatFileSize(file.size);
+            } else {
+                // Multiple files preview
+                const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+                previewImage.src = '';
+                fileName.textContent = `${files.length} files selected`;
+                fileSize.textContent = `Total: ${formatFileSize(totalSize)}`;
+            }
+
+            // Always show thumbnail list for uploaded images
+            showUploadedImagesList(files);
+        }
+
+        function showUploadedImagesList(files) {
+            const uploadedImagesSection = document.getElementById('uploadedImagesList');
+            const imagesList = document.getElementById('imagesList');
+
+            // Clear existing list
+            imagesList.innerHTML = '';
+
+            files.forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const imageItem = document.createElement('div');
+                    imageItem.className = 'flex items-center p-3 border border-gray-200 rounded-lg bg-gray-50';
+                    imageItem.innerHTML = `
+                        <div class="flex-shrink-0 mr-4">
+                            <img src="${e.target.result}" alt="${file.name}" class="w-12 h-12 object-cover rounded border">
+                        </div>
+                        <div class="flex-grow text-left">
+                            <h4 class="font-medium text-gray-900 text-sm">${file.name}</h4>
+                            <p class="text-xs text-gray-500">${formatFileSize(file.size)} • ${file.type.split('/')[1].toUpperCase()}</p>
+                        </div>
+                        <div class="flex-shrink-0 text-right">
+                            <span class="text-xs text-gray-400">Ready</span>
+                        </div>
+                    `;
+                    imagesList.appendChild(imageItem);
+                };
+                reader.readAsDataURL(file);
+            });
+
+            uploadedImagesSection.classList.remove('hidden');
         }
 
         function formatFileSize(bytes) {
@@ -228,14 +302,21 @@
         // Form submission
         document.getElementById('optimizeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            if (!selectedFile) {
-                alert('Please select an image file');
+            await processImages();
+        });
+
+        async function processImages() {
+            if (!selectedFiles || selectedFiles.length === 0) {
+                alert('Please select image files');
                 return;
             }
 
             const formData = new FormData();
-            formData.append('image', selectedFile);
+
+            // Add all selected files
+            selectedFiles.forEach(file => {
+                formData.append('images', file);
+            });
 
             const selectedFormat = document.querySelector('input[name="format"]:checked');
             if (selectedFormat) {
@@ -248,6 +329,8 @@
                 formData.append('reduction', document.getElementById('reductionSlider').value);
             }
 
+            // Hide uploaded images list and show progress
+            document.getElementById('uploadedImagesList').classList.add('hidden');
             showProgress();
 
             try {
@@ -267,7 +350,7 @@
                 alert('Error: ' + error.message);
                 hideProgress();
             }
-        });
+        }
 
         function showProgress() {
             document.getElementById('submitBtn').disabled = true;
@@ -298,35 +381,81 @@
             document.getElementById('progressSection').classList.add('hidden');
         }
 
-        function showResults(result) {
+        function showResults(results) {
             hideProgress();
 
-            const resultContent = document.getElementById('resultContent');
-            resultContent.innerHTML = `
-                <div class="mb-6">
-                    <h4 class="text-lg font-semibold text-gray-900 mb-2">Optimized ${result.format.toUpperCase()}</h4>
-                    <p class="text-gray-600">Image optimized ${result.dimensionsReduced ? '• Dimensions reduced' : ''}</p>
-                </div>
+            const optimizedImagesList = document.getElementById('optimizedImagesList');
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                    <div class="text-center">
-                        <p class="text-sm text-gray-600 mb-1">Original Size</p>
-                        <p class="text-lg font-semibold">${formatFileSize(result.originalSize)}</p>
-                    </div>
-                    <div class="text-center">
-                        <p class="text-sm text-gray-600 mb-1">Optimized Size</p>
-                        <p class="text-lg font-semibold">${formatFileSize(result.processedSize)}</p>
-                    </div>
-                    <div class="text-center">
-                        <p class="text-sm text-gray-600 mb-1">Size Reduction</p>
-                        <p class="text-lg font-semibold text-green-600">${result.compressionRatio}</p>
-                    </div>
-                </div>
+            // Clear existing results
+            optimizedImagesList.innerHTML = '';
 
-                <a href="${result.downloadUrl}" download class="inline-block bg-green-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-green-700 transition-colors">
-                    📥 Download Optimized Image
-                </a>
-            `;
+            if (Array.isArray(results)) {
+                // Multiple results - track all files for cleanup
+                results.forEach(result => {
+                    processedFiles.push({
+                        filename: result.filename,
+                        type: 'optimize'
+                    });
+                });
+
+                // Create optimized images list with same layout as uploaded list
+                results.forEach((result, index) => {
+                    const compressionPercent = parseFloat(result.compressionRatio.replace('%', ''));
+                    const compressionColor = compressionPercent > 50 ? 'text-green-600' : compressionPercent > 25 ? 'text-blue-600' : 'text-orange-600';
+
+                    const imageItem = document.createElement('div');
+                    imageItem.className = 'flex items-center p-3 border border-gray-200 rounded-lg bg-green-50';
+                    imageItem.innerHTML = `
+                        <div class="flex-shrink-0 mr-4">
+                            <div class="w-12 h-12 bg-green-100 rounded border flex items-center justify-center">
+                                <span class="text-green-600 text-lg">✓</span>
+                            </div>
+                        </div>
+                        <div class="flex-grow text-left">
+                            <h4 class="font-medium text-gray-900 text-sm">${result.originalFilename || `Image ${index + 1}`}</h4>
+                            <p class="text-xs text-gray-600">${formatFileSize(result.originalSize)} → ${formatFileSize(result.processedSize)} • ${result.format}</p>
+                            <p class="text-xs ${compressionColor} font-medium">📉 ${result.compressionRatio} smaller</p>
+                        </div>
+                        <div class="flex-shrink-0">
+                            <a href="${result.downloadUrl}" download class="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 transition-colors">
+                                📥 Download
+                            </a>
+                        </div>
+                    `;
+                    optimizedImagesList.appendChild(imageItem);
+                });
+
+            } else {
+                // Single result - track file for cleanup
+                processedFiles.push({
+                    filename: results.filename,
+                    type: 'optimize'
+                });
+
+                const compressionPercent = parseFloat(results.compressionRatio.replace('%', ''));
+                const compressionColor = compressionPercent > 50 ? 'text-green-600' : compressionPercent > 25 ? 'text-blue-600' : 'text-orange-600';
+
+                const imageItem = document.createElement('div');
+                imageItem.className = 'flex items-center p-3 border border-gray-200 rounded-lg bg-green-50';
+                imageItem.innerHTML = `
+                    <div class="flex-shrink-0 mr-4">
+                        <div class="w-12 h-12 bg-green-100 rounded border flex items-center justify-center">
+                            <span class="text-green-600 text-lg">✓</span>
+                        </div>
+                    </div>
+                    <div class="flex-grow text-left">
+                        <h4 class="font-medium text-gray-900 text-sm">${results.originalFilename || 'Optimized Image'}</h4>
+                        <p class="text-xs text-gray-600">${formatFileSize(results.originalSize)} → ${formatFileSize(results.processedSize)} • ${results.format}</p>
+                        <p class="text-xs ${compressionColor} font-medium">📉 ${results.compressionRatio} smaller</p>
+                    </div>
+                    <div class="flex-shrink-0">
+                        <a href="${results.downloadUrl}" download class="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 transition-colors">
+                            📥 Download
+                        </a>
+                    </div>
+                `;
+                optimizedImagesList.appendChild(imageItem);
+            }
 
             document.getElementById('resultsSection').classList.remove('hidden');
 
@@ -336,6 +465,26 @@
                 block: 'center'
             });
         }
+
+        // Download All as ZIP functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const downloadAllZipBtn = document.getElementById('downloadAllZipBtn');
+            if (downloadAllZipBtn) {
+                downloadAllZipBtn.addEventListener('click', function() {
+                    // Trigger download for all processed files
+                    const downloadLinks = document.querySelectorAll('#optimizedImagesList a[download]');
+                    if (downloadLinks.length > 0) {
+                        downloadLinks.forEach((link, index) => {
+                            setTimeout(() => {
+                                link.click();
+                            }, index * 500); // Stagger downloads by 500ms
+                        });
+                    } else {
+                        alert('No files available for download');
+                    }
+                });
+            }
+        });
 
         // Drag and drop
         const uploadZone = document.querySelector('.upload-zone');
@@ -354,15 +503,73 @@
             e.preventDefault();
             uploadZone.classList.remove('dragover');
             
-            const files = e.dataTransfer.files;
-            if (files.length > 0 && files[0].type.startsWith('image/')) {
-                selectedFile = files[0];
-                document.getElementById('imageInput').files = files;
-                showFilePreview(files[0]);
+            const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+            if (files.length > 0) {
+                if (files.length > 20) {
+                    alert('Maximum 20 images allowed. Please select fewer files.');
+                    return;
+                }
+
+                // Check file sizes
+                for (let file of files) {
+                    if (file.size > 5 * 1024 * 1024) {
+                        alert(`File "${file.name}" is larger than 5MB. Please choose smaller files.`);
+                        return;
+                    }
+                }
+
+                selectedFiles = files;
+
+                // Update the file input
+                const dt = new DataTransfer();
+                files.forEach(file => dt.items.add(file));
+                document.getElementById('imageInput').files = dt.files;
+
+                showFilePreview(files);
             }
         });
 
         // Default format is already set to 'original' in HTML
+
+        // Auto-cleanup functionality
+        function cleanupProcessedFiles() {
+            if (processedFiles.length === 0) return;
+
+            // Send cleanup request
+            fetch('/api/cleanup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ files: processedFiles })
+            }).catch(err => {
+                console.log('Cleanup request failed:', err);
+            });
+        }
+
+        // Cleanup on page unload (refresh/close)
+        window.addEventListener('beforeunload', cleanupProcessedFiles);
+
+        // Cleanup on page visibility change (tab switch)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                cleanupProcessedFiles();
+            }
+        });
+
+        // Cleanup after 5 minutes of inactivity
+        let cleanupTimer;
+        function resetCleanupTimer() {
+            clearTimeout(cleanupTimer);
+            cleanupTimer = setTimeout(cleanupProcessedFiles, 5 * 60 * 1000); // 5 minutes
+        }
+
+        // Reset timer on user activity
+        ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+            document.addEventListener(event, resetCleanupTimer, true);
+        });
+
+        resetCleanupTimer();
     </script>
 </body>
 </html>

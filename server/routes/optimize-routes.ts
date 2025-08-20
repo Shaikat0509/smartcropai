@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { nanoid } from "nanoid";
 import { spawn } from "child_process";
+import { squooshOptimizer } from '../squoosh_optimizer';
 
 // Configure multer for image uploads
 const optimizeStorage = multer.diskStorage({
@@ -23,7 +24,10 @@ const optimizeStorage = multer.diskStorage({
 
 const optimizeUpload = multer({
   storage: optimizeStorage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit per file
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit per file
+    files: 20 // Maximum 20 files
+  },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -34,22 +38,29 @@ const optimizeUpload = multer({
 });
 
 export function registerOptimizeRoutes(app: Express) {
-  // Image optimize/convert endpoint
-  app.post('/api/optimize-convert', optimizeUpload.single('image'), async (req, res) => {
+  // Image optimize/convert endpoint - supports multiple images (up to 20)
+  app.post('/api/optimize-convert', optimizeUpload.array('images', 20), async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No image file uploaded' });
+      if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+        return res.status(400).json({ error: 'No image files uploaded' });
       }
 
       const { format, losslessOptimize, reduceDimensions, reduction } = req.body;
 
-      // Validate format and determine output format
-      const allowedFormats = ['jpeg', 'png', 'webp', 'original'];
-      let outputFormat = format && allowedFormats.includes(format) ? format : 'original';
+      // Process multiple files
+      const results = [];
+      const files = req.files as Express.Multer.File[];
 
-      // If 'original' is selected, detect the original format
-      if (outputFormat === 'original') {
-        const originalExt = path.extname(req.file.originalname).toLowerCase();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        // Validate format and determine output format for this file
+        const allowedFormats = ['jpeg', 'png', 'webp', 'original'];
+        let outputFormat = format && allowedFormats.includes(format) ? format : 'original';
+
+        // If 'original' is selected, detect the original format
+        if (outputFormat === 'original') {
+          const originalExt = path.extname(file.originalname).toLowerCase();
         switch (originalExt) {
           case '.jpg':
           case '.jpeg':
@@ -64,79 +75,57 @@ export function registerOptimizeRoutes(app: Express) {
           default:
             // Default to JPEG for unknown formats
             outputFormat = 'jpeg';
+          }
         }
-      }
 
-      // Parse settings
-      const isLossless = losslessOptimize === 'true';
-      const shouldReduceDimensions = reduceDimensions === 'true';
-      const reductionPercent = shouldReduceDimensions ? Math.max(50, Math.min(95, parseInt(reduction) || 80)) : 100;
-      
-      // Create output directory
-      const outputDir = path.join(process.cwd(), "uploads", "processed", "optimize");
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
+        // Parse settings for this file
+        const isLossless = losslessOptimize === 'true';
+        const shouldReduceDimensions = reduceDimensions === 'true';
+        const reductionPercent = shouldReduceDimensions ? Math.max(50, Math.min(95, parseInt(reduction) || 80)) : 100;
 
-      const outputFilename = `optimized-${nanoid()}.${outputFormat === 'jpeg' ? 'jpg' : outputFormat}`;
-      const outputPath = path.join(outputDir, outputFilename);
+        // Create output directory
+        const outputDir = path.join(process.cwd(), "uploads", "processed", "optimize");
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
 
-      // Use professional Python optimizer for industry-best results
-      let optimizationResult;
-      let professionalOptimizationUsed = false;
+        const outputFilename = `optimized-${nanoid()}.${outputFormat === 'jpeg' ? 'jpg' : outputFormat}`;
+        const outputPath = path.join(outputDir, outputFilename);
 
-      try {
-        // Prepare optimization options
-        const optimizationOptions = {
-          format: outputFormat, // Pass format as-is, including 'auto'
-          quality: isLossless ? 'auto' : 'auto',
-          lossless: isLossless,
-          max_width: shouldReduceDimensions ? Math.round(2000 * (reductionPercent / 100)) : null,
-          max_height: shouldReduceDimensions ? Math.round(2000 * (reductionPercent / 100)) : null
-        };
+        // Try Squoosh for maximum optimization, fallback to Sharp if needed
+        console.log(`Optimizing file ${i + 1}/${files.length} with Squoosh: ${outputFormat}, reduce: ${shouldReduceDimensions}`);
 
-        // Run professional optimizer
-        const pythonProcess = spawn('python3', [
-          path.join(process.cwd(), 'server', 'professional_image_optimizer.py'),
-          req.file.path,
-          outputPath,
-          JSON.stringify(optimizationOptions)
-        ]);
+        let optimizationResult;
+        let squooshOptimizationUsed = false;
 
-        let pythonOutput = '';
-        let pythonError = '';
+        try {
+          // Set a timeout for Squoosh optimization
+          const squooshPromise = squooshOptimizer.optimizeImage(
+            file.path,
+            outputPath,
+            outputFormat,
+            shouldReduceDimensions,
+            reductionPercent
+          );
 
-        pythonProcess.stdout.on('data', (data) => {
-          pythonOutput += data.toString();
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Squoosh timeout')), 15000); // 15 second timeout
         });
 
-        pythonProcess.stderr.on('data', (data) => {
-          pythonError += data.toString();
-        });
+        const squooshResult = await Promise.race([squooshPromise, timeoutPromise]) as any;
 
-        await new Promise((resolve, reject) => {
-          pythonProcess.on('close', (code) => {
-            if (code === 0) {
-              try {
-                optimizationResult = JSON.parse(pythonOutput);
-                professionalOptimizationUsed = true;
-                console.log('Professional optimization results:', optimizationResult);
-                resolve(code);
-              } catch (e) {
-                reject(new Error('Failed to parse optimization results'));
-              }
-            } else {
-              reject(new Error(`Professional optimizer failed: ${pythonError}`));
-            }
-          });
-          pythonProcess.on('error', reject);
-        });
-
+        if (squooshResult.success) {
+          optimizationResult = squooshResult;
+          squooshOptimizationUsed = true;
+          console.log('Squoosh optimization results:', optimizationResult);
+        } else {
+          throw new Error(squooshResult.error || 'Squoosh optimization failed');
+        }
       } catch (error) {
-        console.log('Professional optimization failed, using Sharp fallback:', error.message);
+        console.log('Squoosh optimization failed, using Sharp fallback:', error.message);
 
-        // Fallback to improved Sharp pipeline
-        let pipeline = sharp(req.file.path);
+          // Fallback to improved Sharp pipeline
+          let pipeline = sharp(file.path);
 
         // Apply dimension reduction if requested
         if (shouldReduceDimensions) {
@@ -181,48 +170,59 @@ export function registerOptimizeRoutes(app: Express) {
             break;
         }
 
-        // Process with Sharp
-        await pipeline.toFile(outputPath);
+          // Process with Sharp
+          await pipeline.toFile(outputPath);
+        }
+
+        // Get file stats
+        const stats = fs.statSync(outputPath);
+        const originalStats = fs.statSync(file.path);
+
+        // Use Squoosh optimization results if available, otherwise calculate manually
+        let compressionRatio, finalFormat, qualityUsed, optimizationMethod;
+
+        if (squooshOptimizationUsed && optimizationResult) {
+          compressionRatio = `${optimizationResult.compressionRatio}%`;
+          finalFormat = optimizationResult.format;
+          qualityUsed = optimizationResult.qualityUsed;
+          optimizationMethod = 'Squoosh maximum optimization';
+        } else {
+          compressionRatio = ((originalStats.size - stats.size) / originalStats.size * 100).toFixed(1) + '%';
+          finalFormat = outputFormat.toUpperCase();
+          qualityUsed = isLossless ? 'lossless' : 'auto';
+          optimizationMethod = 'Sharp-based optimization';
+        }
+
+        // Clean up original file
+        fs.unlinkSync(file.path);
+
+        // Add result for this file
+        results.push({
+          success: true,
+          filename: outputFilename,
+          format: finalFormat,
+          losslessOptimized: isLossless,
+          dimensionsReduced: shouldReduceDimensions,
+          reductionPercent: shouldReduceDimensions ? reductionPercent : 100,
+          originalSize: originalStats.size,
+          processedSize: stats.size,
+          compressionRatio: compressionRatio,
+          qualityUsed: qualityUsed,
+          optimizationMethod: optimizationMethod,
+          squooshOptimization: squooshOptimizationUsed,
+          downloadUrl: `/api/download/optimize/${outputFilename}`,
+          originalFilename: file.originalname
+        });
       }
 
-      // Get file stats
-      const stats = fs.statSync(outputPath);
-      const originalStats = fs.statSync(req.file.path);
-
-      // Use professional optimization results if available, otherwise calculate manually
-      let compressionRatio, finalFormat, qualityUsed, optimizationMethod;
-
-      if (professionalOptimizationUsed && optimizationResult) {
-        compressionRatio = `${optimizationResult.compression_ratio}%`;
-        // Always use the actual output format, not what the optimizer reports
-        finalFormat = outputFormat.toUpperCase();
-        qualityUsed = optimizationResult.quality_used;
-        optimizationMethod = 'Professional AI-powered optimization';
+      // Return results (single result if 1 file, array if multiple)
+      if (results.length === 1) {
+        res.json(results[0]);
       } else {
-        compressionRatio = ((originalStats.size - stats.size) / originalStats.size * 100).toFixed(1) + '%';
-        finalFormat = outputFormat.toUpperCase();
-        qualityUsed = isLossless ? 'lossless' : 'auto';
-        optimizationMethod = 'Sharp-based optimization';
+        res.json(results);
       }
 
-      // Clean up original file
-      fs.unlinkSync(req.file.path);
 
-      res.json({
-        success: true,
-        filename: outputFilename,
-        format: finalFormat,
-        losslessOptimized: isLossless,
-        dimensionsReduced: shouldReduceDimensions,
-        reductionPercent: shouldReduceDimensions ? reductionPercent : 100,
-        originalSize: originalStats.size,
-        processedSize: stats.size,
-        compressionRatio: compressionRatio,
-        qualityUsed: qualityUsed,
-        optimizationMethod: optimizationMethod,
-        professionalOptimization: professionalOptimizationUsed,
-        downloadUrl: `/api/download/optimize/${outputFilename}`
-      });
 
     } catch (error) {
       console.error('Image optimize error:', error);

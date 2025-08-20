@@ -35,7 +35,7 @@
     <header class="bg-white shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
             <div class="flex items-center justify-between">
-                <h1 class="text-2xl font-bold text-gray-900">🎨 Media Tools</h1>
+                <a href="/" class="text-2xl font-bold text-gray-900 hover:text-gray-700 transition-colors">🎨 Media Tools</a>
                 <nav class="hidden md:flex space-x-6">
                     <a href="/" class="text-gray-600 hover:text-gray-900">Home</a>
                     <a href="/resize-image" class="text-gray-600 hover:text-gray-900">Resize Images</a>
@@ -156,6 +156,7 @@
 
     <script>
         let selectedFile = null;
+        let processedFiles = []; // Track processed files for cleanup
         let videoPlatforms = {};
 
         // Quality slider handling
@@ -363,7 +364,14 @@
             const resultContent = document.getElementById('resultContent');
 
             if (Array.isArray(results)) {
-                // Multiple results
+                // Multiple results - track all files for cleanup
+                results.forEach(result => {
+                    processedFiles.push({
+                        filename: result.filename,
+                        type: 'videos'
+                    });
+                });
+
                 let html = `<div class="mb-6">
                     <h4 class="text-lg font-semibold text-gray-900 mb-2">✅ ${results.length} Videos Generated</h4>
                     <p class="text-gray-600">All selected platforms have been processed</p>
@@ -406,7 +414,12 @@
 
                 resultContent.innerHTML = html;
             } else {
-                // Single result
+                // Single result - track file for cleanup
+                processedFiles.push({
+                    filename: results.filename,
+                    type: 'videos'
+                });
+
                 resultContent.innerHTML = `
                     <div class="mb-6">
                         <h4 class="text-lg font-semibold text-gray-900 mb-2">${results.platform}</h4>
@@ -493,6 +506,46 @@
 
         // Initialize
         loadVideoPlatforms();
+
+        // Auto-cleanup functionality
+        function cleanupProcessedFiles() {
+            if (processedFiles.length === 0) return;
+
+            // Send cleanup request
+            fetch('/api/cleanup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ files: processedFiles })
+            }).catch(err => {
+                console.log('Cleanup request failed:', err);
+            });
+        }
+
+        // Cleanup on page unload (refresh/close)
+        window.addEventListener('beforeunload', cleanupProcessedFiles);
+
+        // Cleanup on page visibility change (tab switch)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                cleanupProcessedFiles();
+            }
+        });
+
+        // Cleanup after 5 minutes of inactivity
+        let cleanupTimer;
+        function resetCleanupTimer() {
+            clearTimeout(cleanupTimer);
+            cleanupTimer = setTimeout(cleanupProcessedFiles, 5 * 60 * 1000); // 5 minutes
+        }
+
+        // Reset timer on user activity
+        ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+            document.addEventListener(event, resetCleanupTimer, true);
+        });
+
+        resetCleanupTimer();
     </script>
 </body>
 </html>
